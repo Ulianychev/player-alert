@@ -1,77 +1,86 @@
-# Minecraft Player Tracker
+# Minecraft Player Alert Bot
 
-Small VPS-friendly tracker for `mc.justvanilla.net`. It polls the same public status API that `mctracker.xyz` uses and sends a notification when one of your tracked nicknames appears in the visible player list.
+Telegram bot with a small control panel for tracking Minecraft players on chosen servers.
+
+The bot lets each chat:
+
+- add a server by IP/domain;
+- add a player nickname;
+- receive alerts when the player appears in the visible player list;
+- receive alerts when the player disappears from the visible player list;
+- list or delete active trackers;
+- run a manual check.
 
 ## Important limitation
 
-`mc.justvanilla.net` currently reports the total online count, but not always the full list of nicknames. For example, the API can say `26/70` online while returning only 11 visible names. This tracker can only detect a tracked player when the server/API includes that nickname in `players.list`.
+The bot uses the public Minecraft status API at `api.mcsrvstat.us`, similar to `mctracker.xyz`.
 
-For perfect tracking, you would need cooperation from the server side: Query with full player list, RCON/log access, or a server plugin.
+Many servers report the total online count but do not expose the full nickname list. In that case the bot can only detect players who appear in `players.list`. For perfect tracking, you need server-side access: logs, RCON, Query with a full player list, or a plugin.
 
-## Local setup
+## Telegram setup
 
-1. Copy the example config:
-
-   ```bash
-   cp config.example.json config.json
-   ```
-
-2. Edit `config.json` and replace `ExampleNick1`, `ExampleNick2` with the nicknames you want to track.
-
-3. Run:
-
-   ```bash
-   python player_tracker.py
-   ```
-
-Without Telegram or Discord settings, alerts are printed to stdout.
-
-## Telegram alerts
-
-1. Create a bot via Telegram `@BotFather`.
-2. Send any message to the bot.
-3. Get your chat id, for example from `https://api.telegram.org/bot<BOT_TOKEN>/getUpdates`.
-4. Copy `.env.example` to `.env` and fill:
+1. Create a bot in Telegram through `@BotFather`.
+2. Copy the token.
+3. Copy `.env.example` to `.env`.
+4. Put the token into `.env`:
 
    ```dotenv
    TELEGRAM_BOT_TOKEN=123456:abc...
-   TELEGRAM_CHAT_ID=123456789
+   POLL_INTERVAL_SECONDS=300
+   STATE_PATH=/app/data/state.json
+   LOG_LEVEL=INFO
    ```
 
-## Discord alerts
+You do not need to hard-code a chat id. Open the bot in Telegram and send `/start`.
 
-Create a Discord webhook and set this in `.env`:
+## Bot controls
 
-```dotenv
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+Commands:
+
+```text
+/start  - open the control panel
+/add    - add a server + player tracker
+/list   - show trackers
+/check  - check now
+/cancel - cancel current input
 ```
+
+The inline control panel exposes the same actions through buttons.
 
 ## VPS deployment with Docker
 
 On the VPS:
 
 ```bash
-git clone <your-repo-url> mc-player-tracker
-cd mc-player-tracker
-cp config.example.json config.json
+git clone https://github.com/Ulianychev/player-alert.git
+cd player-alert
 cp .env.example .env
-nano config.json
 nano .env
 docker compose up -d --build
 docker compose logs -f
 ```
 
-The default polling interval is 300 seconds because the public API is cached for about 5 minutes.
+The default polling interval is 300 seconds because the public status API is cached for about 5 minutes.
 
-For a one-shot check:
+## Local run without Docker
+
+On Windows PowerShell:
+
+```powershell
+$env:TELEGRAM_BOT_TOKEN="123456:abc..."
+python .\telegram_player_bot.py
+```
+
+On Linux:
 
 ```bash
-RUN_ONCE=1 python player_tracker.py
+export TELEGRAM_BOT_TOKEN="123456:abc..."
+python telegram_player_bot.py
 ```
 
 ## Files
 
-- `player_tracker.py` - tracker process.
-- `config.json` - server, interval, and tracked nicknames.
-- `.env` - optional notification secrets.
-- `data/state.json` - persisted last seen state.
+- `telegram_player_bot.py` - Telegram control panel and monitoring loop.
+- `player_tracker.py` - older config-file tracker kept for manual/legacy use.
+- `.env` - local secrets, ignored by git.
+- `data/state.json` - persisted bot state and chat trackers.

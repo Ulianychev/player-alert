@@ -1,10 +1,9 @@
 services:
-  mc-player-tracker:
+  player-alert-bot:
     build: .
-    container_name: mc-player-tracker
+    container_name: player-alert-bot
     restart: unless-stopped
     env_file:
       - .env
     volumes:
-      - ./config.json:/app/config.json:ro
       - ./data:/app/data
