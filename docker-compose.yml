@@ -1,0 +1,10 @@
+services:
+  mc-player-tracker:
+    build: .
+    container_name: mc-player-tracker
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./data:/app/data

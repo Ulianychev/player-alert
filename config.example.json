@@ -1,0 +1,11 @@
+{
+  "server": "mc.justvanilla.net",
+  "poll_interval_seconds": 300,
+  "tracked_players": [
+    "ExampleNick1",
+    "ExampleNick2"
+  ],
+  "notify_on_join": true,
+  "notify_on_leave": false,
+  "notify_on_server_offline": true
+}
