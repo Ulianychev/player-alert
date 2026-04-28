@@ -4,11 +4,11 @@ Telegram bot with a small control panel for tracking Minecraft players on chosen
 
 The bot lets each chat:
 
-- add a server by IP/domain;
-- add a player nickname;
+- add up to 3 servers by IP/domain;
+- add up to 8 player nicknames;
 - receive alerts when the player appears in the visible player list;
 - receive alerts when the player disappears from the visible player list;
-- list or delete active trackers;
+- list or delete servers and players;
 - run a manual check.
 
 ## Important limitation
@@ -38,14 +38,17 @@ You do not need to hard-code a chat id. Open the bot in Telegram and send `/star
 Commands:
 
 ```text
-/start  - open the control panel
-/add    - add a server + player tracker
-/list   - show trackers
-/check  - check now
-/cancel - cancel current input
+/start     - open the control panel
+/addserver - add a server
+/addplayer - add a player nickname
+/list      - show servers and players
+/check     - check now
+/cancel    - cancel current input
 ```
 
 The inline control panel exposes the same actions through buttons.
+
+The bot checks every tracked player on every tracked server. With 3 servers and 8 players, that is 24 checks per polling cycle.
 
 ## VPS deployment with Docker
 
@@ -61,6 +64,36 @@ docker compose logs -f
 ```
 
 The default polling interval is 300 seconds because the public status API is cached for about 5 minutes.
+
+The compose file runs the container as `root` by default through:
+
+```yaml
+user: "${PUID:-0}:${PGID:-0}"
+```
+
+This is intentional for simple VPS deployment with a bind-mounted `./data` folder. Without it, Docker may create `./data` as `root`, while the app user inside the container cannot write `state.tmp`.
+
+If you want to run it as a specific Linux user later, create/chown the data directory and set `PUID`/`PGID` in `.env`.
+
+## Updating on VPS
+
+From the app folder:
+
+```bash
+cd ~/apps/player-alert
+git pull
+docker compose up -d --build
+docker compose logs -f
+```
+
+If you previously hit `PermissionError: /app/data/state.tmp`, this update fixes it. If the old `data` directory still has awkward permissions, this is also safe:
+
+```bash
+cd ~/apps/player-alert
+mkdir -p data
+chmod 755 data
+docker compose up -d --build
+```
 
 ## Local run without Docker
 
