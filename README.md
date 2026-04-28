@@ -13,9 +13,9 @@ The bot lets each chat:
 
 ## Important limitation
 
-The bot uses the public Minecraft status API at `api.mcsrvstat.us`, similar to `mctracker.xyz`.
+The bot connects directly to the Minecraft server status protocol. It does not rely on the cached `api.mcsrvstat.us` response.
 
-Many servers report the total online count but do not expose the full nickname list. In that case the bot can only detect players who appear in `players.list`. For perfect tracking, you need server-side access: logs, RCON, Query with a full player list, or a plugin.
+Many servers report the total online count but do not expose the full nickname list. In that case the bot can only detect players who appear in the server status sample. For perfect tracking, you need server-side access: logs, RCON, Query with a full player list, or a plugin.
 
 ## Telegram setup
 
@@ -26,7 +26,8 @@ Many servers report the total online count but do not expose the full nickname l
 
    ```dotenv
    TELEGRAM_BOT_TOKEN=123456:abc...
-   POLL_INTERVAL_SECONDS=300
+   POLL_INTERVAL_SECONDS=60
+   MINECRAFT_PROTOCOL_VERSION=774
    STATE_PATH=/app/data/state.json
    LOG_LEVEL=INFO
    ```
@@ -63,7 +64,7 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-The default polling interval is 300 seconds because the public status API is cached for about 5 minutes.
+The default polling interval is 60 seconds. The bot connects directly to the Minecraft server, so there is no 5-minute third-party cache.
 
 The compose file runs the container as `root` by default through:
 

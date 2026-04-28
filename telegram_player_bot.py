@@ -3,6 +3,8 @@ import json
 import logging
 import os
 import signal
+import socket
+import struct
 import sys
 import threading
 import time
@@ -11,12 +13,12 @@ from hashlib import sha1
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 
 DEFAULT_STATE_PATH = "data/bot-state.json"
-DEFAULT_API_BASE = "https://api.mcsrvstat.us/3"
+DEFAULT_MINECRAFT_PORT = 25565
+DEFAULT_PROTOCOL_VERSION = 774
 MAX_SERVERS = 3
 MAX_PLAYERS = 8
 USER_AGENT = "mc-player-alert-bot/1.0"
@@ -109,11 +111,17 @@ class TelegramApi:
 
 
 class PlayerAlertBot:
-    def __init__(self, telegram: TelegramApi, store: StateStore, poll_interval_seconds: int, api_base: str) -> None:
+    def __init__(
+        self,
+        telegram: TelegramApi,
+        store: StateStore,
+        poll_interval_seconds: int,
+        protocol_version: int,
+    ) -> None:
         self.telegram = telegram
         self.store = store
         self.poll_interval_seconds = poll_interval_seconds
-        self.api_base = api_base
+        self.protocol_version = protocol_version
         self.running = True
         self.offset: int | None = None
 
@@ -356,7 +364,7 @@ class PlayerAlertBot:
             self.check_chat(chat_id, servers, players, notify_changes=True)
 
     def check_chat(self, chat_id: str, servers: list[str], players: list[str], notify_changes: bool) -> list[str]:
-        statuses = fetch_statuses(self.api_base, set(servers))
+        statuses = fetch_statuses(set(servers), self.protocol_version)
         summaries: list[str] = []
 
         with self.store.lock:
@@ -444,26 +452,111 @@ def migrate_chat_state(chat: dict[str, Any]) -> None:
     chat["players"] = chat["players"][:MAX_PLAYERS]
 
 
-def fetch_statuses(api_base: str, servers: set[str]) -> dict[str, dict[str, Any] | Exception]:
+def fetch_statuses(servers: set[str], protocol_version: int) -> dict[str, dict[str, Any] | Exception]:
     statuses: dict[str, dict[str, Any] | Exception] = {}
     for server in sorted(servers):
         try:
-            statuses[server] = fetch_server_status(api_base, server)
+            statuses[server] = fetch_server_status(server, protocol_version)
         except Exception as exc:
             statuses[server] = exc
     return statuses
 
 
-def fetch_server_status(api_base: str, server: str) -> dict[str, Any]:
-    url = f"{api_base.rstrip('/')}/{quote(server, safe=':.-_')}"
-    request = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
-    try:
-        with urlopen(request, timeout=20) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except HTTPError as exc:
-        raise RuntimeError(f"API returned HTTP {exc.code} for {server}") from exc
-    except URLError as exc:
-        raise RuntimeError(f"Could not reach status API for {server}: {exc.reason}") from exc
+def fetch_server_status(server: str, protocol_version: int) -> dict[str, Any]:
+    host, port = parse_server_address(server)
+    with socket.create_connection((host, port), timeout=10) as sock:
+        sock.settimeout(10)
+        handshake = b"".join(
+            [
+                encode_varint(0),
+                encode_varint(protocol_version),
+                encode_string(host),
+                struct.pack(">H", port),
+                encode_varint(1),
+            ]
+        )
+        sock.sendall(encode_packet(handshake))
+        sock.sendall(encode_packet(encode_varint(0)))
+
+        _packet_length = read_varint(sock)
+        packet_id = read_varint(sock)
+        if packet_id != 0:
+            raise RuntimeError(f"Unexpected status packet id {packet_id} from {server}")
+
+        response_length = read_varint(sock)
+        response = read_exact(sock, response_length)
+
+    raw_status = json.loads(response.decode("utf-8"))
+    raw_players = raw_status.get("players", {})
+    sample = raw_players.get("sample") or []
+    return {
+        "online": True,
+        "players": {
+            "online": raw_players.get("online", 0),
+            "max": raw_players.get("max", "?"),
+            "list": [
+                {"name": str(item.get("name", "")), "uuid": item.get("id")}
+                for item in sample
+                if isinstance(item, dict) and item.get("name")
+            ],
+        },
+        "version": raw_status.get("version", {}),
+        "description": raw_status.get("description"),
+    }
+
+
+def parse_server_address(server: str) -> tuple[str, int]:
+    value = normalize_server(server)
+    if ":" in value:
+        host, port_text = value.rsplit(":", 1)
+        if port_text.isdigit():
+            return host, int(port_text)
+    return value, DEFAULT_MINECRAFT_PORT
+
+
+def encode_varint(value: int) -> bytes:
+    value &= 0xFFFFFFFF
+    output = bytearray()
+    while True:
+        byte = value & 0x7F
+        value >>= 7
+        if value:
+            byte |= 0x80
+        output.append(byte)
+        if not value:
+            return bytes(output)
+
+
+def read_varint(sock: socket.socket) -> int:
+    result = 0
+    for offset in range(5):
+        data = sock.recv(1)
+        if not data:
+            raise EOFError("Socket closed while reading varint")
+        byte = data[0]
+        result |= (byte & 0x7F) << (7 * offset)
+        if not byte & 0x80:
+            return result
+    raise ValueError("Varint is too big")
+
+
+def encode_string(value: str) -> bytes:
+    data = value.encode("utf-8")
+    return encode_varint(len(data)) + data
+
+
+def encode_packet(payload: bytes) -> bytes:
+    return encode_varint(len(payload)) + payload
+
+
+def read_exact(sock: socket.socket, length: int) -> bytes:
+    chunks = bytearray()
+    while len(chunks) < length:
+        data = sock.recv(length - len(chunks))
+        if not data:
+            raise EOFError("Socket closed before full response was read")
+        chunks.extend(data)
+    return bytes(chunks)
 
 
 def extract_player_names(status: dict[str, Any]) -> list[str]:
@@ -605,7 +698,7 @@ def main() -> int:
         telegram=TelegramApi(token),
         store=StateStore(Path(os.getenv("STATE_PATH", DEFAULT_STATE_PATH))),
         poll_interval_seconds=poll_interval_seconds,
-        api_base=os.getenv("API_BASE", DEFAULT_API_BASE),
+        protocol_version=int(os.getenv("MINECRAFT_PROTOCOL_VERSION", str(DEFAULT_PROTOCOL_VERSION))),
     )
     bot.run()
     return 0
